@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # get measurements of your internet connection with iperf3
-# usage: netmeasure.sh <log>
+# usage: netmeasure.sh OR netmeasure.sh <debug>
 
 # bash strict mode
 set -o errexit
@@ -25,7 +25,7 @@ ports="$(seq 5200 5209)"
 
 function usage () {
 	# usage: usage
-	echo -e "Usage: ${0} or ${0} debug"
+	echo -e "Usage: ${0} OR ${0} debug"
 }
 
 function log () {
@@ -41,20 +41,28 @@ function log () {
 	echo -e "${timestamp}: ${1}" >> "${logfile}"
 }
 
-function run_test () {
-	# usage: run_test <server> <port>
-	local server="${1}"
-	local port="${2}"
+function create_resultdir () {
+	# usage: create_resultdir
+	local resultdir="$(date +'%Y-%m-%d_%H-%M')"
 
-	local logdir="$(date +'%Y-%m-%d_%H')"
-	local logfile="${logdir}/${server}_${port}.log"
-
-	if [ ! -e "${logdir}" ]; then
-		mkdir -p "${logdir}"
+	if [ ! -e "${resultdir}" ]; then
+		mkdir -p "${resultdir}"
 	fi
 
+	echo "${resultdir}"
+
+}
+
+function run_test () {
+	# usage: run_test <server> <port> <resultdir>
+	local server="${1}"
+	local port="${2}"
+	local resultdir="${3}"
+
+	local resultfile="${resultdir}/${server}_${port}.log"
+
 	if [ -z ${DEBUG:-} ]; then
-		iperf3	--logfile "${logfile}" \
+		iperf3	--logfile "${resultfile}" \
 			--format m \
 			--verbose \
 			--json \
@@ -62,13 +70,13 @@ function run_test () {
 			--port "${port}" \
 			--client \
 			"${server}" 2>&1 >/dev/null \
-			|| {	rm "${logfile}"; \
+			|| {	rm "${resultfile}"; \
 				return -1;
 			}
 	else
 		log "Testing ${server}:${port}"
 		echo "Testing ${server}:${port}"
-		iperf3	--logfile "${logfile}" \
+		iperf3	--logfile "${resultfile}" \
 			--format m \
 			--verbose \
 			--debug \
@@ -77,7 +85,7 @@ function run_test () {
 			--client \
 			"${server}" 2>&1 \
 			|| {	log "${server}:${port} unreachable"; \
-				rm "${logfile}"; \
+				rm "${resultfile}"; \
 				return -1;
 			} 
 		log "Success"
@@ -90,16 +98,18 @@ if [ "$#" -gt 1 ]; then
 	exit -1
 fi
 
-# check if we are logging
+# check if we are debugging
 if [ ! -z ${1:-} ]; then
 	DEBUG="debug"
 fi
+
+resultdir="$(create_resultdir)"
 
 # iterate over each server and port from the list, if a server:port combination
 # works, continue with the next server
 for server in ${servers[@]}; do
 	for port in ${ports[@]}; do
-		run_test "${server}" "${port}" \
+		run_test "${server}" "${port}" "${resultdir}"\
 			&& continue 2 \
 			|| continue
 	done
