@@ -1,3 +1,5 @@
 *.log
+*.download
+*.upload
 __pycache__/
 *.swp
