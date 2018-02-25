@@ -23,7 +23,8 @@ class ResultParser(object):
 
         self.working_dir = working_dir
         self.result_dirs = []
-        self.result_files = {}
+        self.download_files = {}
+        self.upload_files = {}
         self.iperf_results = {}
 
     def get_result_dirs(self):
@@ -38,7 +39,7 @@ class ResultParser(object):
 
         return self.result_dirs
 
-    def get_result_files(self):
+    def get_download_files(self):
         """
         Walk through directory and generate a list of result files
         """
@@ -47,25 +48,40 @@ class ResultParser(object):
             file_list = []
             for filename in os.listdir(directory):
                 path = os.path.join(directory, filename)
-                if filename.endswith('log'):
+                if filename.endswith('download'):
                     file_list.append(path)
 
-            self.result_files[directory] = file_list
+            self.download_files[directory] = file_list
 
-        return self.result_files
+        return self.download_files
 
-    def parse_result_files(self):
+    def get_upload_files(self):
+        """
+        Walk through directory and generate a list of result files
+        """
+
+        for directory in self.result_dirs:
+            file_list = []
+            for filename in os.listdir(directory):
+                path = os.path.join(directory, filename)
+                if filename.endswith('upload'):
+                    file_list.append(path)
+
+            self.upload_files[directory] = file_list
+
+        return self.upload_files
+
+    def parse_download_files(self):
         """
         Iterate over result files,
         parse received bits from files,
         return dict timestamp:average
         """
 
-        self.get_result_dirs()
-        self.get_result_files()
+        self.get_download_files()
 
         hourly_average = {} # todo naming?
-        for directory, file_list in self.result_files.items():
+        for directory, file_list in self.download_files.items():
             directory = os.path.basename(os.path.normpath(directory))
             timestamp = datetime.strptime(directory, "%Y-%m-%d_%H-%M")
             file_count = len(file_list)
@@ -82,29 +98,76 @@ class ResultParser(object):
                     file_count -= 1
                     print('No json data, got\n{d}'.format(d=data))
 
-            average = (received / file_count)
+            if file_count:
+                average = (received / file_count)
+                hourly_average[timestamp] = average
 
-            hourly_average[timestamp] = average
+        self.iperf_results['download'] = hourly_average
 
-        return hourly_average
+    def parse_upload_files(self):
+        """
+        Iterate over result files,
+        parse received bits from files,
+        return dict timestamp:average
+        """
+
+        self.get_upload_files()
+
+        hourly_average = {} # todo naming?
+        for directory, file_list in self.upload_files.items():
+            directory = os.path.basename(os.path.normpath(directory))
+            timestamp = datetime.strptime(directory, "%Y-%m-%d_%H-%M")
+            file_count = len(file_list)
+            received = 0
+            average = 0
+
+            for filename in file_list:
+                with open(filename) as infile:
+                    data = infile.read()
+
+                try:
+                    received += json.loads(data)["end"]["sum_received"]["bits_per_second"]
+                except json.JSONDecodeError:
+                    file_count -= 1
+                    print('No json data, got\n{d}'.format(d=data))
+
+            if file_count:
+                average = (received / file_count)
+                hourly_average[timestamp] = average
+
+        self.iperf_results['upload'] = hourly_average
+
+    def parse_files(self):
+        """
+        Get result dirs, call parse_download_files and call_upload_files, return iperf_results
+        """
+
+        self.get_result_dirs()
+        self.parse_upload_files()
+        self.parse_download_files()
+
+        return self.iperf_results
 
 class Plotter(object):
     """
     Plot averaged iperf3 results over time
     """
 
-    def __init__(self, hourly_average):
+    def __init__(self, iperf_results):
         """
         Import data in form of {'<timestamp>': average}
         """
 
-        # sort hourly_average by timestamp
-        keys = []
-        for k in hourly_average.keys():
-            keys.append(k)
-        sorted_keys = sorted(keys)
-        sorted_hourly_average = [(key, hourly_average[key]) for key in sorted_keys]
-        self.hourly_average = OrderedDict(sorted_hourly_average)
+        self.iperf_results = {}
+
+        for direction, hourly_average in iperf_results.items():
+            # sort hourly_average by timestamp
+            keys = []
+            for k in hourly_average.keys():
+                keys.append(k)
+            sorted_keys = sorted(keys)
+            sorted_hourly_average = [(key, hourly_average[key]) for key in sorted_keys]
+            self.iperf_results[direction] = OrderedDict(sorted_hourly_average)
 
 
     def plot(self):
@@ -112,21 +175,27 @@ class Plotter(object):
         Generate line chart of average over time
         """
 
-        timestamps = []
-        averages = []
+        plt.figure(1)
+        pltcounter = 11
+        for direction, hourly_average in self.iperf_results.items():
+            timestamps = []
+            averages = []
+            plt.subplot(200 + pltcounter)
 
-        for ts, avg in self.hourly_average.items():
-            timestamps.append(datetime.strftime(ts, '%Y-%m-%d_%H-%M'))
-            avg = round(avg/1048576, 2) # convert bps to Mbps, round to 2 decimals
-            averages.append(avg)
+            for ts, avg in hourly_average.items():
+                timestamps.append(datetime.strftime(ts, '%Y-%m-%d_%H-%M'))
+                avg = round(avg/(10**6), 2) # convert bps to Mbps, round to 2 decimals
+                averages.append(avg)
 
-        plt.plot(timestamps, averages)
-        plt.title('Average Throughput (download) over Time')
-        plt.xlabel('Time')
-        plt.ylabel('Average Throughput (download)')
+            plt.plot(timestamps, averages)
+            plt.title('Average {d} over Time'.format(d=direction))
+            plt.xlabel('Time/[Timestamp]')
+            plt.ylabel('{d}/[Mbps]'.format(d=direction))
+            pltcounter+=1
+
         plt.show()
 
 if __name__ == "__main__":
     parser = ResultParser()
-    plotter = Plotter(parser.parse_result_files())
+    plotter = Plotter(parser.parse_files())
     plotter.plot()
