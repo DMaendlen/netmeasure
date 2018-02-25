@@ -53,13 +53,13 @@ function create_resultdir () {
 
 }
 
-function run_test () {
-	# usage: run_test <server> <port> <resultdir>
+function run_download_test () {
+	# usage: run_download_test <server> <port> <resultdir>
 	local server="${1}"
 	local port="${2}"
 	local resultdir="${3}"
 
-	local resultfile="${resultdir}/${server}_${port}.log"
+	local resultfile="${resultdir}/${server}_${port}.download"
 
 	if [ -z ${DEBUG:-} ]; then
 		iperf3	--logfile "${resultfile}" \
@@ -74,13 +74,48 @@ function run_test () {
 				return -1;
 			}
 	else
-		log "Testing ${server}:${port}"
-		echo "Testing ${server}:${port}"
+		log "Testing download ${server}:${port}"
 		iperf3	--logfile "${resultfile}" \
 			--format m \
 			--verbose \
 			--debug \
 			--reverse \
+			--port "${port}" \
+			--client \
+			"${server}" 2>&1 \
+			|| {	log "${server}:${port} unreachable"; \
+				rm "${resultfile}"; \
+				return -1;
+			} 
+		log "Success"
+	fi
+}
+
+function run_upload_test () {
+	# usage: run_upload_test <server> <port> <resultdir>
+	local server="${1}"
+	local port="${2}"
+	local resultdir="${3}"
+
+	local resultfile="${resultdir}/${server}_${port}.upload"
+
+	if [ -z ${DEBUG:-} ]; then
+		iperf3	--logfile "${resultfile}" \
+			--format m \
+			--verbose \
+			--json \
+			--port "${port}" \
+			--client \
+			"${server}" 2>&1 >/dev/null \
+			|| {	rm "${resultfile}"; \
+				return -1;
+			}
+	else
+		log "Testing upload ${server}:${port}"
+		iperf3	--logfile "${resultfile}" \
+			--format m \
+			--verbose \
+			--debug \
 			--port "${port}" \
 			--client \
 			"${server}" 2>&1 \
@@ -109,7 +144,15 @@ resultdir="$(create_resultdir)"
 # works, continue with the next server
 for server in ${servers[@]}; do
 	for port in ${ports[@]}; do
-		run_test "${server}" "${port}" "${resultdir}"\
+		run_download_test "${server}" "${port}" "${resultdir}"\
+			&& continue 2 \
+			|| continue
+	done
+done
+
+for server in ${servers[@]}; do
+	for port in ${ports[@]}; do
+		run_upload_test "${server}" "${port}" "${resultdir}"\
 			&& continue 2 \
 			|| continue
 	done
