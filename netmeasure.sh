@@ -43,7 +43,7 @@ function log () {
 
 function create_resultdir () {
 	# usage: create_resultdir
-	local resultdir="$(date +'%Y-%m-%d_%H-%M')"
+	local resultdir="results/$(date +'%Y-%m-%d_%H-%M')"
 
 	if [ ! -e "${resultdir}" ]; then
 		mkdir -p "${resultdir}"
