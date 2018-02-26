@@ -1,16 +1,18 @@
 #!/usr/bin/python3
+"""
+Parse iperf3 results from json files, calculate average per hour and plot the
+result in a simple line graph
+"""
 
 from collections import OrderedDict
 from datetime import datetime
 
 import json
-import matplotlib.pyplot as plt
 import os
 
-"""
-Parse iperf3 results from json files, calculate average per hour and plot the
-result in a simple line graph
-"""
+import matplotlib.pyplot as plt
+
+
 class ResultParser(object):
     """
     Parse iperf3 results from json files, calculate average per hour
@@ -22,12 +24,13 @@ class ResultParser(object):
         """
 
         self.working_dir = working_dir
-        self.result_dirs = []
-        self.download_files = {}
-        self.upload_files = {}
+        self.directions = ["upload", "download"]
+        self.dirs = []
+        self.download = {}
+        self.upload = {}
         self.iperf_results = {}
 
-    def get_result_dirs(self):
+    def get_dirs(self):
         """
         Walk through working_dir and generate a list of result dirs
         """
@@ -35,118 +38,65 @@ class ResultParser(object):
         for directory in os.listdir(self.working_dir):
             path = os.path.join(self.working_dir, directory)
             if os.path.isdir(path) and directory.startswith('2018'):
-                self.result_dirs.append(path)
+                self.dirs.append(path)
 
-        return self.result_dirs
+        return self.dirs
 
-    def get_download_files(self):
+    def get_files(self):
         """
         Walk through directory and generate a list of result files
         """
 
-        for directory in self.result_dirs:
-            file_list = []
-            for filename in os.listdir(directory):
-                path = os.path.join(directory, filename)
-                if filename.endswith('download'):
-                    file_list.append(path)
+        for direction in self.directions:
+            for directory in self.dirs:
+                file_list = []
+                for filename in os.listdir(directory):
+                    path = os.path.join(directory, filename)
+                    if filename.endswith(direction):
+                        file_list.append(path)
 
-            self.download_files[directory] = file_list
-
-        return self.download_files
-
-    def get_upload_files(self):
-        """
-        Walk through directory and generate a list of result files
-        """
-
-        for directory in self.result_dirs:
-            file_list = []
-            for filename in os.listdir(directory):
-                path = os.path.join(directory, filename)
-                if filename.endswith('upload'):
-                    file_list.append(path)
-
-            self.upload_files[directory] = file_list
-
-        return self.upload_files
-
-    def parse_download_files(self):
-        """
-        Iterate over result files,
-        parse received bits from files,
-        return dict timestamp:average
-        """
-
-        self.get_download_files()
-
-        hourly_average = {} # todo naming?
-        for directory, file_list in self.download_files.items():
-            directory = os.path.basename(os.path.normpath(directory))
-            timestamp = datetime.strptime(directory, "%Y-%m-%d_%H-%M")
-            file_count = len(file_list)
-            received = 0
-            average = 0
-
-            for filename in file_list:
-                with open(filename) as infile:
-                    data = infile.read()
-
-                try:
-                    received += json.loads(data)["end"]["sum_received"]["bits_per_second"]
-                except json.JSONDecodeError:
-                    file_count -= 1
-                    print('No json data, got\n{d}'.format(d=data))
-
-            if file_count:
-                average = (received / file_count)
-                hourly_average[timestamp] = average
-
-        self.iperf_results['download'] = hourly_average
-
-    def parse_upload_files(self):
-        """
-        Iterate over result files,
-        parse received bits from files,
-        return dict timestamp:average
-        """
-
-        self.get_upload_files()
-
-        hourly_average = {} # todo naming?
-        for directory, file_list in self.upload_files.items():
-            directory = os.path.basename(os.path.normpath(directory))
-            timestamp = datetime.strptime(directory, "%Y-%m-%d_%H-%M")
-            file_count = len(file_list)
-            received = 0
-            average = 0
-
-            for filename in file_list:
-                with open(filename) as infile:
-                    data = infile.read()
-
-                try:
-                    received += json.loads(data)["end"]["sum_received"]["bits_per_second"]
-                except json.JSONDecodeError:
-                    file_count -= 1
-                    print('No json data, got\n{d}'.format(d=data))
-
-            if file_count:
-                average = (received / file_count)
-                hourly_average[timestamp] = average
-
-        self.iperf_results['upload'] = hourly_average
+                getattr(self, direction)[directory] = file_list
 
     def parse_files(self):
         """
-        Get result dirs, call parse_download_files and call_upload_files, return iperf_results
+        Iterate over result files,
+        parse received bits from files,
+        return dict timestamp:average
         """
 
-        self.get_result_dirs()
-        self.parse_upload_files()
-        self.parse_download_files()
+        srec = "sum_received"
+        bps = "bits_per_second"
+
+        self.get_dirs()
+        self.get_files()
+
+        for direction in self.directions:
+            hourly_average = {}         # todo naming?
+            for directory, file_list in getattr(self, direction).items():
+                directory = os.path.basename(os.path.normpath(directory))
+                timestamp = datetime.strptime(directory, "%Y-%m-%d_%H-%M")
+                file_count = len(file_list)
+                received = 0
+                average = 0
+
+                for filename in file_list:
+                    with open(filename) as infile:
+                        data = infile.read()
+
+                    try:
+                        received += json.loads(data)["end"][srec][bps]
+                    except json.JSONDecodeError:
+                        file_count -= 1
+                        print('No json data, got\n{d}'.format(d=data))
+
+                if file_count:
+                    average = (received / file_count)
+                    hourly_average[timestamp] = average
+
+            self.iperf_results[direction] = hourly_average
 
         return self.iperf_results
+
 
 class Plotter(object):
     """
@@ -166,9 +116,12 @@ class Plotter(object):
             for k in hourly_average.keys():
                 keys.append(k)
             sorted_keys = sorted(keys)
-            sorted_hourly_average = [(key, hourly_average[key]) for key in sorted_keys]
-            self.iperf_results[direction] = OrderedDict(sorted_hourly_average)
+            sorted_hourly_average = []
 
+            for key in sorted_keys:
+                sorted_hourly_average.append((key, hourly_average[key]))
+
+            self.iperf_results[direction] = OrderedDict(sorted_hourly_average)
 
     def plot(self):
         """
@@ -182,16 +135,16 @@ class Plotter(object):
             averages = []
             plt.subplot(200 + pltcounter)
 
-            for ts, avg in hourly_average.items():
-                timestamps.append(datetime.strftime(ts, '%Y-%m-%d_%H-%M'))
-                avg = round(avg/(10**6), 2) # convert bps to Mbps, round to 2 decimals
+            for tstamp, avg in hourly_average.items():
+                timestamps.append(datetime.strftime(tstamp, '%Y-%m-%d_%H-%M'))
+                avg = round(avg/(10**6), 2)  # bps to Mbps, round to 2 decimals
                 averages.append(avg)
 
             plt.plot(timestamps, averages)
             plt.title('Average {d} over Time'.format(d=direction))
             plt.xlabel('Time/[Timestamp]')
             plt.ylabel('{d}/[Mbps]'.format(d=direction))
-            pltcounter+=1
+            pltcounter += 1
 
         plt.show()
 
