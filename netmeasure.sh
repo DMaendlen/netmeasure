@@ -9,41 +9,46 @@ set -o nounset
 set -o pipefail
 IFS=$'\n\t'
 
-# set servers and ports
-# list of public iperf servers from https://iperf.fr/iperf-servers.php
-servers=("bouygues.iperf.fr"
-	"ping.online.net"
-	"iperf.eenet.ee"
-	"iperf.volia.net"
-	"iperf.it-north.net"
-	"iperf.biznetnetworks.com"
-	"iperf.scottlinux.com"
-	"iperf.he.net"
-)
+# check if we are debugging
+if [ -z "${1:-}" ]; then
+	DEBUG=''
+else
+	DEBUG="debug"
+fi
 
-ports="$(seq 5200 5209)"
+directions=("upload"
+	"download"
+)
 
 function usage () {
 	# usage: usage
 	echo -e "Usage: ${0} OR ${0} debug"
 }
 
-function log () {
+function debug () {
 	# usage: log <message>
 	local logdir="logs"
 	local logfile="${logdir}/general.log"
-	local timestamp="$(date +'%Y-%m-%d %H:%M')"
+	local timestamp=""
+	timestamp="$(date +'%Y-%m-%d %H:%M')"
 
 	if [ ! -e "${logdir}" ]; then
 		mkdir -p "${logdir}"
 	fi
 
-	echo -e "${timestamp}: ${1}" >> "${logfile}"
+	logstring="${timestamp}: ${1}"
+
+	if [ ! -z "${DEBUG}" ]; then
+		printf '%s\n' "${logstring}" >> "${logfile}"
+	fi
+
+	printf '%s\n' "${logstring}"
 }
 
 function create_resultdir () {
 	# usage: create_resultdir
-	local resultdir="results/$(date +'%Y-%m-%d_%H-%M')"
+	local resultdir=""
+	resultdir="results/$(date +'%Y-%m-%d_%H-%M')"
 
 	if [ ! -e "${resultdir}" ]; then
 		mkdir -p "${resultdir}"
@@ -53,78 +58,67 @@ function create_resultdir () {
 
 }
 
-function run_download_test () {
-	# usage: run_download_test <server> <port> <resultdir>
-	local server="${1}"
-	local port="${2}"
-	local resultdir="${3}"
+resultdir="$(create_resultdir)"
 
-	local resultfile="${resultdir}/${server}_${port}.download"
+function run_test () {
+	# usage: run_test <direction>
+	local resultdir="${resultdir}"
+	local direction="${1}"
 
-	if [ -z ${DEBUG:-} ]; then
-		iperf3	--logfile "${resultfile}" \
-			--format m \
-			--verbose \
-			--json \
-			--reverse \
-			--port "${port}" \
-			--client \
-			"${server}" 2>&1 >/dev/null \
+	# set servers and ports
+	# list of public iperf servers from https://iperf.fr/iperf-servers.php
+	local servers=("bouygues.iperf.fr"
+	"ping.online.net"
+	"iperf.eenet.ee"
+	"iperf.volia.net"
+	"iperf.it-north.net"
+	"iperf.biznetnetworks.com"
+	"iperf.scottlinux.com"
+	"iperf.he.net"
+	)
+
+	local ports=""
+	ports="$(seq 5200 5209)"
+
+	trap "rm -rf \"${resultdir}\"; debug 'Caught SIGINT'; exit 1" INT
+	trap "rm -rf \"${resultdir}\"; debug 'Caught SIGTERM'; exit 1" TERM
+	for server in "${servers[@]}"; do
+		for port in "${ports[@]}"; do
+			local resultfile="${resultdir}/${server}_${port}.${direction}"
+			iperf_args=()
+			if [ -z "${DEBUG}" ]; then
+				iperf_args+=("--json")
+			else
+				iperf_args+=(	"--debug"
+						"--format"
+						"m"
+				)
+			fi
+			if [ "${direction}" == "download" ]; then
+				iperf_args+=("--reverse")
+			fi
+			iperf_args+=(	"--logfile"
+					"${resultfile}"
+					"--verbose"
+					"--port"
+					"${port}"
+					"--client"
+					"${server}"
+			)
+			if [ -z "${DEBUG}" ]; then
+				iperf_args+=("2>&1 >/dev/null")
+			fi
+
+			debug "Testing ${direction} ${server}:${port}";
+			iperf3 "${iperf_args[@]}" \
 			|| {	rm "${resultfile}"; \
-				return -1;
-			}
-	else
-		log "Testing download ${server}:${port}"
-		iperf3	--logfile "${resultfile}" \
-			--format m \
-			--verbose \
-			--debug \
-			--reverse \
-			--port "${port}" \
-			--client \
-			"${server}" 2>&1 \
-			|| {	log "${server}:${port} unreachable"; \
-				rm "${resultfile}"; \
-				return -1;
-			} 
-		log "Success"
-	fi
-}
-
-function run_upload_test () {
-	# usage: run_upload_test <server> <port> <resultdir>
-	local server="${1}"
-	local port="${2}"
-	local resultdir="${3}"
-
-	local resultfile="${resultdir}/${server}_${port}.upload"
-
-	if [ -z ${DEBUG:-} ]; then
-		iperf3	--logfile "${resultfile}" \
-			--format m \
-			--verbose \
-			--json \
-			--port "${port}" \
-			--client \
-			"${server}" 2>&1 >/dev/null \
-			|| {	rm "${resultfile}"; \
-				return -1;
-			}
-	else
-		log "Testing upload ${server}:${port}"
-		iperf3	--logfile "${resultfile}" \
-			--format m \
-			--verbose \
-			--debug \
-			--port "${port}" \
-			--client \
-			"${server}" 2>&1 \
-			|| {	log "${server}:${port} unreachable"; \
-				rm "${resultfile}"; \
-				return -1;
-			} 
-		log "Success"
-	fi
+				debug "${direction} ${server}:${port} failed";\
+				continue;
+			}\
+			&& continue 2
+		done
+	done
+	trap - INT TERM
 }
 
 # check if people are using this correctly
@@ -133,27 +127,8 @@ if [ "$#" -gt 1 ]; then
 	exit -1
 fi
 
-# check if we are debugging
-if [ ! -z ${1:-} ]; then
-	DEBUG="debug"
-fi
-
-resultdir="$(create_resultdir)"
-
 # iterate over each server and port from the list, if a server:port combination
 # works, continue with the next server
-for server in ${servers[@]}; do
-	for port in ${ports[@]}; do
-		run_download_test "${server}" "${port}" "${resultdir}"\
-			&& continue 2 \
-			|| continue
-	done
-done
-
-for server in ${servers[@]}; do
-	for port in ${ports[@]}; do
-		run_upload_test "${server}" "${port}" "${resultdir}"\
-			&& continue 2 \
-			|| continue
-	done
+for direction in "${directions[@]}"; do
+	run_test "${direction}"
 done
