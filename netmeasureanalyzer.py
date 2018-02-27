@@ -1,7 +1,11 @@
 #!/usr/bin/python3
 """
-Parse iperf3 results from json files, calculate average per hour and plot the
-result in a simple line graph
+netmeasure.sh creates up-/download files that contain network throughput in bps
+
+This analyzer takes those files, parses them and calculates the average
+throughput in Mbps at any given timestamp for the 8 servers that are tested.
+
+This average is then plotted.
 """
 
 from collections import OrderedDict
