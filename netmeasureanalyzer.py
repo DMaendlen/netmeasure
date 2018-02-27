@@ -28,10 +28,11 @@ class NetMeasureAnalyzer(object):
         """
 
         self.working_dir = working_dir
-        self.directions = ["upload", "download"]
+        self.directions = ["download", "upload"]
         self.dirs = []
-        self.fig, self.axf = plt.subplots(2, sharex=True)
-        self.iperf_results = {}
+        self.iperf_results = OrderedDict()
+        self.download = {}
+        self.upload = {}
 
     def __get_dirs__(self):
         """
@@ -64,6 +65,9 @@ class NetMeasureAnalyzer(object):
         """
         Iterate over result files,
         parse received bits from files,
+        calculate average throughput for direction per timestamp,
+        save results,
+        return results
         """
 
         srec = "sum_received"
@@ -93,16 +97,22 @@ class NetMeasureAnalyzer(object):
             self.iperf_results[direction] = OrderedDict(sorted(
                 hourly_average.items(), reverse=True))
 
-            return self.iperf_results
+        return self.iperf_results
 
     def plot(self, save=False, show=True):
         """
-        Plot a line chart
+        Iterate over all timestamp/average pairs,
+        convert timestamps to strings,
+        convert average to Mbps and then plot the pairs.
+        Optionally save the plot or show it.
+        Return the plot as a matplotlib.pyplot.fig
         """
 
         self.__get_dirs__()
         self.__get_files__()
         self.parse_files()
+
+        fig, axf = plt.subplots(2, sharex=True)
 
         index = 0
         for direction, hourly_average in self.iperf_results.items():
@@ -114,21 +124,20 @@ class NetMeasureAnalyzer(object):
                 avg = round(avg/(10**6), 2)  # bps to Mbps, round to 2 decimals
                 averages.append(avg)
 
-            self.axf[index].plot(timestamps, averages)
-            self.axf[index].set_title('Average {d} over Time'.format(
-                d=direction))
-            self.axf[index].set_xlabel('Time [Timestamp]')
-            self.axf[index].set_ylabel('{d} [Mbps]'.format(d=direction))
+            axf[index].plot(timestamps, averages)
+            axf[index].set_title('Average {d} over Time'.format(d=direction))
+            axf[index].set_xlabel('Time [Timestamp]')
+            axf[index].set_ylabel('{d} [Mbps]'.format(d=direction))
             index += 1
 
         if save:
-            self.fig.savefig('fig.png', dpi=600)
+            fig.savefig('fig.png', dpi=600)
 
         if show:
             plt.show()
 
-        return self.fig
+        return fig
 
 if __name__ == "__main__":
-    PLOTTER = NetMeasureAnalyzer()
-    PLOTTER.plot(True)
+    NMA = NetMeasureAnalyzer()
+    NMA.plot(True)
