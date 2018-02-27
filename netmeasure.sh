@@ -1,6 +1,12 @@
 #!/bin/bash
 
-# get measurements of your internet connection with iperf3
+# This script creates a directory 'results' and a subdirectory with the exact hour
+# and minute the script was run if both do not already exist. Afterwards, internet
+# throughput is measured via iperf3 for 8 servers in Europe, Asia and America. The
+# throughput for each server is placed in a upload and a download file. If the
+# script is called with a <debug> parameter, the files are easily human-parsable,
+# if no parameter is given, the output is json-formatted.
+
 # usage: netmeasure.sh OR netmeasure.sh <debug>
 
 # bash strict mode
@@ -80,11 +86,16 @@ function run_test () {
 	local ports=""
 	ports="$(seq 5200 5209)"
 
+	# trap SIGINT and SIGTERM to clean up before exiting if interrupted
 	trap "rm -rf \"${resultdir}\"; debug 'Caught SIGINT'; exit 1" INT
 	trap "rm -rf \"${resultdir}\"; debug 'Caught SIGTERM'; exit 1" TERM
+
+	# iterate over each server and port from the list, if a server:port
+	# combination works, continue with the next server
 	for server in "${servers[@]}"; do
 		for port in "${ports[@]}"; do
 			local resultfile="${resultdir}/${server}_${port}.${direction}"
+
 			iperf_args=()
 			if [ -z "${DEBUG}" ]; then
 				iperf_args+=("--json")
@@ -111,8 +122,8 @@ function run_test () {
 
 			debug "Testing ${direction} ${server}:${port}";
 			iperf3 "${iperf_args[@]}" \
-			|| {	rm "${resultfile}"; \
-				debug "${direction} ${server}:${port} failed";\
+			|| {	rm "${resultfile}";
+				debug "${direction} ${server}:${port} failed";
 				continue;
 			}\
 			&& continue 2
@@ -127,8 +138,7 @@ if [ "$#" -gt 1 ]; then
 	exit -1
 fi
 
-# iterate over each server and port from the list, if a server:port combination
-# works, continue with the next server
+# run the test twice: upload and download speed
 for direction in "${directions[@]}"; do
 	run_test "${direction}"
 done
