@@ -13,7 +13,7 @@ import os
 import matplotlib.pyplot as plt
 
 
-class ResultParser(object):
+class NetMeasureAnalyzer(object):
     """
     Parse iperf3 results from json files, calculate average per hour
     """
@@ -26,11 +26,10 @@ class ResultParser(object):
         self.working_dir = working_dir
         self.directions = ["upload", "download"]
         self.dirs = []
-        self.download = {}
-        self.upload = {}
+        self.fig, self.axf = plt.subplots(2, sharex=True)
         self.iperf_results = {}
 
-    def get_dirs(self):
+    def __get_dirs__(self):
         """
         Walk through working_dir and generate a list of result dirs
         """
@@ -42,7 +41,7 @@ class ResultParser(object):
 
         return self.dirs
 
-    def get_files(self):
+    def __get_files__(self):
         """
         Walk through directory and generate a list of result files
         """
@@ -61,14 +60,10 @@ class ResultParser(object):
         """
         Iterate over result files,
         parse received bits from files,
-        return dict timestamp:average
         """
 
         srec = "sum_received"
         bps = "bits_per_second"
-
-        self.get_dirs()
-        self.get_files()
 
         for direction in self.directions:
             hourly_average = {}         # todo naming?
@@ -77,7 +72,6 @@ class ResultParser(object):
                 timestamp = datetime.strptime(directory, "%Y-%m-%d_%H-%M")
                 file_count = len(file_list)
                 received = 0
-                average = 0
 
                 for filename in file_list:
                     with open(filename) as infile:
@@ -90,65 +84,47 @@ class ResultParser(object):
                         print('No json data, got\n{d}'.format(d=data))
 
                 if file_count:
-                    average = (received / file_count)
-                    hourly_average[timestamp] = average
+                    hourly_average[timestamp] = (received / file_count)
 
-            self.iperf_results[direction] = hourly_average
+            self.iperf_results[direction] = OrderedDict(sorted(
+                hourly_average.items(), reverse=True))
 
-        return self.iperf_results
+            return self.iperf_results
 
-
-class Plotter(object):
-    """
-    Plot averaged iperf3 results over time
-    """
-
-    def __init__(self, iperf_results):
+    def plot(self, save=False, show=True):
         """
-        Import data in form of {'<timestamp>': average}
+        Plot a line chart
         """
 
-        self.iperf_results = {}
+        self.__get_dirs__()
+        self.__get_files__()
+        self.parse_files()
 
-        for direction, hourly_average in iperf_results.items():
-            # sort hourly_average by timestamp
-            keys = []
-            for k in hourly_average.keys():
-                keys.append(k)
-            sorted_keys = sorted(keys)
-            sorted_hourly_average = []
-
-            for key in sorted_keys:
-                sorted_hourly_average.append((key, hourly_average[key]))
-
-            self.iperf_results[direction] = OrderedDict(sorted_hourly_average)
-
-    def plot(self):
-        """
-        Generate line chart of average over time
-        """
-
-        plt.figure(1)
-        pltcounter = 11
+        index = 0
         for direction, hourly_average in self.iperf_results.items():
             timestamps = []
             averages = []
-            plt.subplot(200 + pltcounter)
 
             for tstamp, avg in hourly_average.items():
                 timestamps.append(datetime.strftime(tstamp, '%Y-%m-%d_%H-%M'))
                 avg = round(avg/(10**6), 2)  # bps to Mbps, round to 2 decimals
                 averages.append(avg)
 
-            plt.plot(timestamps, averages)
-            plt.title('Average {d} over Time'.format(d=direction))
-            plt.xlabel('Time/[Timestamp]')
-            plt.ylabel('{d}/[Mbps]'.format(d=direction))
-            pltcounter += 1
+            self.axf[index].plot(timestamps, averages)
+            self.axf[index].set_title('Average {d} over Time'.format(
+                d=direction))
+            self.axf[index].set_xlabel('Time [Timestamp]')
+            self.axf[index].set_ylabel('{d} [Mbps]'.format(d=direction))
+            index += 1
 
-        plt.show()
+        if save:
+            self.fig.savefig('fig.png', dpi=600)
+
+        if show:
+            plt.show()
+
+        return self.fig
 
 if __name__ == "__main__":
-    parser = ResultParser()
-    plotter = Plotter(parser.parse_files())
-    plotter.plot()
+    PLOTTER = NetMeasureAnalyzer()
+    PLOTTER.plot(True)
